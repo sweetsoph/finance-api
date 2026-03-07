@@ -93,7 +93,53 @@ function verifyToken(req, res, next) {
         next();
     });
 }
-    
+
+app.post('/api/transaction', verifyToken, async (req, res) => {
+    try{
+        if(!req.body || !req.body.amount || !req.body.description || !req.body.type_id) {
+            return res.status(400).json({ message: "Amount, description e type_id são obrigatórios." });
+        }
+        const userId = req.user.user_id;
+        const { amount, description, type_id } = req.body;
+        if(isNaN(amount) || amount < 0) {
+            return res.status(400).json({ message: "Amount deve ser um número positivo." });
+        }
+        const categoryId = req.body.category_id || null;
+        const transactionDatetime = req.body.transaction_datetime || null;
+
+        const { rows } = await poolc.query(
+            `INSERT INTO "transaction" (user_id, amount, description, type_id, category_id, transaction_datetime) 
+             VALUES ($1, $2, $3, $4, $5, $6) 
+             RETURNING transaction_id`, 
+            [userId, amount, description, type_id, categoryId, transactionDatetime]
+        );
+        // se a consulta acima não retornar nenhuma linha, significa que a inserção falhou
+        if(rows.length === 0) {
+            return res.status(500).json({ message: "Erro ao registrar transação." });
+        }
+
+        const transactionId = rows[0].transaction_id;
+        
+        res.status(201).json({
+            message: "Transação registrada com sucesso!",
+            transaction: {
+                transaction_id: transactionId,
+            }
+        });
+    } catch (error) {
+        // possibilidades de erro: conexão com o banco, violação de chave estrangeira (type_id ou category_id inválidos)
+        if(error.message && error.message.includes("violates foreign key constraint")) {
+            if(error.message.includes("transaction_transaction_category_fk")) {
+                return res.status(400).json({ message: "Categoria inválida." });
+            }
+            if(error.message.includes("transaction_transaction_type_fk")) {
+                return res.status(400).json({ message: "Tipo de transação inválido." });
+            }
+        }
+        res.status(500).json({ message: "Erro ao registrar transação: " + error.message });
+    }
+});
+
 app.get('/api/users', verifyToken, async (req, res) => {
     const { rows } = await poolc.query('SELECT user_id, username FROM "user"');
 
