@@ -140,6 +140,29 @@ app.post('/api/transaction', verifyToken, async (req, res) => {
     }
 });
 
+app.post('/api/transaction/category', verifyToken, async (req, res) => {
+    try{
+        if(!req.body || !req.body.name || !req.body.color) {
+            return res.status(400).json({ message: "Name e color são obrigatórios." });
+        }
+        const userId = req.user.user_id;
+        const { name, color } = req.body;
+
+        await poolc.query(
+            `INSERT INTO "transaction_category" (user_id, name, color) 
+             VALUES ($1, $2, $3) 
+             RETURNING category_id`, 
+            [userId, name, color]
+        );
+
+        res.json({
+            message: "Categoria de transação registrada com sucesso!"
+        });
+    } catch (error) {
+        res.status(500).json({ message: "Erro ao registrar transação: " + error.message });
+    }
+});
+
 app.get('/api/users', verifyToken, async (req, res) => {
     const { rows } = await poolc.query('SELECT user_id, username FROM "user"');
 
