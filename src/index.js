@@ -163,6 +163,25 @@ app.post('/api/transaction/category', verifyToken, async (req, res) => {
     }
 });
 
+app.get('/api/transaction/category', verifyToken, async (req, res) => {
+    try{
+        const userId = req.user.user_id;
+
+        const categories = await poolc.query(
+            `SELECT category_id, name, color, created_at 
+             FROM "transaction_category" 
+             WHERE user_id = $1`, 
+            [userId]
+        );
+
+        res.json({
+            data: categories.rows
+        });
+    } catch (error) {
+        res.status(500).json({ message: "Erro ao registrar transação: " + error.message });
+    }
+});
+
 app.get('/api/users', verifyToken, async (req, res) => {
     const { rows } = await poolc.query('SELECT user_id, username FROM "user"');
 
