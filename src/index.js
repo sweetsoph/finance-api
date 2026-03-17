@@ -140,6 +140,25 @@ app.post('/api/transaction', verifyToken, async (req, res) => {
     }
 });
 
+app.get('/api/transaction/category', verifyToken, async (req, res) => {
+    try{
+        const userId = req.user.user_id;
+
+        const categories = await poolc.query(
+            `SELECT category_id, name, color, created_at 
+             FROM "transaction_category" 
+             WHERE user_id = $1`, 
+            [userId]
+        );
+
+        res.json({
+            data: categories.rows
+        });
+    } catch (error) {
+        res.status(500).json({ message: "Erro ao resgatar categorias: " + error.message });
+    }
+});
+
 app.post('/api/transaction/category', verifyToken, async (req, res) => {
     try{
         if(!req.body || !req.body.name || !req.body.color) {
@@ -159,26 +178,7 @@ app.post('/api/transaction/category', verifyToken, async (req, res) => {
             message: "Categoria de transação registrada com sucesso!"
         });
     } catch (error) {
-        res.status(500).json({ message: "Erro ao registrar transação: " + error.message });
-    }
-});
-
-app.get('/api/transaction/category', verifyToken, async (req, res) => {
-    try{
-        const userId = req.user.user_id;
-
-        const categories = await poolc.query(
-            `SELECT category_id, name, color, created_at 
-             FROM "transaction_category" 
-             WHERE user_id = $1`, 
-            [userId]
-        );
-
-        res.json({
-            data: categories.rows
-        });
-    } catch (error) {
-        res.status(500).json({ message: "Erro ao registrar transação: " + error.message });
+        res.status(500).json({ message: "Erro ao registrar categoria: " + error.message });
     }
 });
 
