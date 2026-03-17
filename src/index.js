@@ -94,6 +94,85 @@ function verifyToken(req, res, next) {
     });
 }
 
+app.get('/api/transaction', verifyToken, async (req, res) => {
+    try {
+        const userId = req.user.user_id;
+        
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 10;
+        const offset = (page - 1) * limit;
+        const orderBy = req.query.order_by || '[{"field":"transaction_datetime","direction":"desc"}]'; // formato esperado: ?order_by=[{"field":"transaction_datetime","direction":"desc"}]
+        const filterBy = req.query.filter_by || '[]'; // formato esperado: ?filter=[{"field":"description","operator":"ilike","value":"%rent%"}]
+        
+        const orderByJSON = JSON.parse(orderBy);
+        const orderByClause = orderByJSON.map(ob => {
+            const field = ob.field;
+            const direction = ob.direction.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
+            return `${field} ${direction}`;
+        }).join(', ');
+
+        const filterByJSON = JSON.parse(filterBy);
+        const filterByClauses = [];
+        const filterByValues = [];
+
+        let paramIndex = 2; // Começa em 2 porque o primeiro parâmetro é userId
+        filterByJSON.forEach((f) => {
+            const field = f.field;
+            const operator = f.operator.toLowerCase();
+            const value = f.value;
+
+            let sqlOperator;
+            switch(operator) {
+                case 'eq': sqlOperator = '='; break;
+                case 'ilike': sqlOperator = 'ILIKE'; break;
+                case 'gt': sqlOperator = '>'; break;
+                case 'lt': sqlOperator = '<'; break;
+                default: sqlOperator = '='; break;
+            }
+            filterByClauses.push(`${field} ${sqlOperator} $${paramIndex}`);
+            filterByValues.push(value);
+            paramIndex++;
+        });
+
+        const { rows } = await poolc.query(
+            `SELECT * FROM "transaction" 
+             WHERE user_id = $1 
+             ${filterByClauses.length > 0 ? 'AND ' + filterByClauses.join(' AND ') : ''}
+             ORDER BY $${paramIndex}
+             LIMIT $${paramIndex + 1} OFFSET $${paramIndex + 2}`,
+            [userId, ...filterByValues, orderByClause, limit, offset]
+        );
+
+        const countRes = await poolc.query(
+            'SELECT COUNT(*) FROM "transaction" WHERE user_id = $1', 
+            [userId]
+        );
+        const totalItems = parseInt(countRes.rows[0].count);
+
+        const countFilteredRes = await poolc.query(
+            `SELECT COUNT(*) FROM "transaction" 
+             WHERE user_id = $1
+            ${filterByClauses.length > 0 ? 'AND ' + filterByClauses.join(' AND ') : ''}`,
+            [userId, ...filterByValues]
+        );
+        const totalFilteredItems = parseInt(countFilteredRes.rows[0].count);
+
+        res.json({
+            data: rows,
+            meta: {
+                totalItems,
+                currentPage: page,
+                totalFilteredItems,
+                totalPages: Math.ceil(totalFilteredItems / limit),
+                hasNextPage: (page * limit) < totalFilteredItems,
+                hasPreviousPage: totalFilteredItems > 0 && page > 1
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ message: "Erro ao buscar transações: " + error.message });
+    }
+})
+
 app.post('/api/transaction', verifyToken, async (req, res) => {
     try{
         if(!req.body || !req.body.amount || !req.body.description || !req.body.type_id) {
