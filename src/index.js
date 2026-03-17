@@ -95,11 +95,20 @@ function verifyToken(req, res, next) {
 }
 
 app.get('/api/transaction', verifyToken, async (req, res) => {
+    const ALLOWED_ORDER_FIELDS = ['transaction_datetime', 'description', 'amount', 'created_at', 'type_id', 'category_id'];
+    const ALLOWED_FILTER_FIELDS = [
+        { field: 'description', operators: ['eq', 'ilike'] }, 
+        { field: 'amount', operators: ['eq', 'gt', 'lt'] }, 
+        { field: 'transaction_datetime', operators: ['eq', 'gt', 'lt'] },
+        { field: 'created_at', operators: ['eq', 'gt', 'lt'] },
+        { field: 'type_id', operators: ['eq'] },
+        { field: 'category_id', operators: ['eq'] }
+    ];
     try {
         const userId = req.user.user_id;
         
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 10;
+        const page = Math.max(1, parseInt(req.query.page) || 1); // página atual, mínimo 1
+        const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 10)); // máx 100 items por página
         const offset = (page - 1) * limit;
         const orderBy = req.query.order_by || '[{"field":"transaction_datetime","direction":"desc"}]'; // formato esperado: ?order_by=[{"field":"transaction_datetime","direction":"desc"}]
         const filterBy = req.query.filter_by || '[]'; // formato esperado: ?filter=[{"field":"description","operator":"ilike","value":"%rent%"}]
@@ -107,6 +116,9 @@ app.get('/api/transaction', verifyToken, async (req, res) => {
         const orderByJSON = JSON.parse(orderBy);
         const orderByClause = orderByJSON.map(ob => {
             const field = ob.field;
+            if(!ALLOWED_ORDER_FIELDS.includes(field)) {
+                throw new Error(`Campo de ordenação inválido: ${field}`);
+            }
             const direction = ob.direction.toUpperCase() === 'DESC' ? 'DESC' : 'ASC';
             return `${field} ${direction}`;
         }).join(', ');
@@ -121,6 +133,13 @@ app.get('/api/transaction', verifyToken, async (req, res) => {
             const operator = f.operator.toLowerCase();
             const value = f.value;
 
+            if (!ALLOWED_FILTER_FIELDS.some(allowed => allowed.field === field)) {
+                throw new Error(`Campo de filtro inválido: ${field}`);
+            }
+            if(!ALLOWED_FILTER_FIELDS.find(allowed => allowed.field === field).operators.includes(operator)) {
+                throw new Error(`Operador inválido para o campo ${field}: ${operator}`);
+            }
+
             let sqlOperator;
             switch(operator) {
                 case 'eq': sqlOperator = '='; break;
@@ -129,14 +148,19 @@ app.get('/api/transaction', verifyToken, async (req, res) => {
                 case 'lt': sqlOperator = '<'; break;
                 default: sqlOperator = '='; break;
             }
-            filterByClauses.push(`${field} ${sqlOperator} $${paramIndex}`);
+            filterByClauses.push(`t.${field} ${sqlOperator} $${paramIndex}`);
             filterByValues.push(value);
             paramIndex++;
         });
 
         const { rows } = await poolc.query(
-            `SELECT * FROM "transaction" 
-             WHERE user_id = $1 
+            `SELECT t.transaction_id, t.created_at, t.transaction_datetime, 
+                    t.description, t.amount, t.type_id, tt.name as type_name, 
+                    tc.name as category_name, tc.color as category_color
+             FROM "transaction" t
+             JOIN transaction_type tt ON t.type_id = tt.id
+             JOIN transaction_category tc ON t.category_id = tc.category_id
+             WHERE t.user_id = $1 
              ${filterByClauses.length > 0 ? 'AND ' + filterByClauses.join(' AND ') : ''}
              ORDER BY $${paramIndex}
              LIMIT $${paramIndex + 1} OFFSET $${paramIndex + 2}`,
@@ -144,14 +168,14 @@ app.get('/api/transaction', verifyToken, async (req, res) => {
         );
 
         const countRes = await poolc.query(
-            'SELECT COUNT(*) FROM "transaction" WHERE user_id = $1', 
+            'SELECT COUNT(*) FROM "transaction" t WHERE t.user_id = $1', 
             [userId]
         );
         const totalItems = parseInt(countRes.rows[0].count);
 
         const countFilteredRes = await poolc.query(
-            `SELECT COUNT(*) FROM "transaction" 
-             WHERE user_id = $1
+            `SELECT COUNT(*) FROM "transaction" t
+             WHERE t.user_id = $1
             ${filterByClauses.length > 0 ? 'AND ' + filterByClauses.join(' AND ') : ''}`,
             [userId, ...filterByValues]
         );
